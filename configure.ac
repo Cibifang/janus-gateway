@@ -1,4 +1,4 @@
-AC_INIT([Janus Gateway],[0.3.1],[https://github.com/meetecho/janus-gateway],[janus-gateway],[https://janus.conf.meetecho.com])
+AC_INIT([Janus Gateway],[0.4.3],[https://github.com/meetecho/janus-gateway],[janus-gateway],[https://janus.conf.meetecho.com])
 AC_CONFIG_AUX_DIR([.])
 AC_CONFIG_MACRO_DIR([m4])
 
@@ -15,9 +15,9 @@ AC_PROG_CC
 LT_PREREQ([2.2])
 LT_INIT
 
-JANUS_VERSION=30
+JANUS_VERSION=43
 AC_SUBST(JANUS_VERSION)
-JANUS_VERSION_STRING="0.3.1"
+JANUS_VERSION_STRING="0.4.3"
 AC_SUBST(JANUS_VERSION_STRING)
 
 case "$host_os" in
@@ -88,8 +88,12 @@ AC_ARG_ENABLE([all-plugins],
               [
                AS_IF([test "x$enable_plugin_audiobridge" != "xyes"],
                      [enable_plugin_audiobridge=no])
+               AS_IF([test "x$enable_plugin_duktape" != "xyes"],
+                     [enable_plugin_duktape=no])
                AS_IF([test "x$enable_plugin_echotest" != "xyes"],
                      [enable_plugin_echotest=no])
+               AS_IF([test "x$enable_plugin_lua" != "xyes"],
+                     [enable_plugin_lua=no])
                AS_IF([test "x$enable_plugin_recordplay" != "xyes"],
                      [enable_plugin_recordplay=no])
                AS_IF([test "x$enable_plugin_sip" != "xyes"],
@@ -125,6 +129,8 @@ AC_ARG_ENABLE([all-transports],
                      [enable_mqtt=no])
                AS_IF([test "x$enable_unix_sockets" != "xyes"],
                      [enable_unix_sockets=no])
+               AS_IF([test "x$enable_nanomsg" != "xyes"],
+                     [enable_nanomsg=no])
               ],
               [])
 
@@ -185,6 +191,13 @@ AC_ARG_ENABLE([unix-sockets],
                      [enable_unix_sockets=no])],
               [enable_unix_sockets=maybe])
 
+AC_ARG_ENABLE([nanomsg],
+              [AS_HELP_STRING([--disable-nanomsg],
+                              [Disable Nanomsg integration])],
+              [AS_IF([test "x$enable_nanomsg" != "xyes"],
+                     [enable_nanomsg=no])],
+              [enable_nanomsg=maybe])
+
 AC_ARG_ENABLE([sample-event-handler],
               [AS_HELP_STRING([--disable-sample-event-handler],
                               [Disable sample event handler (HTTP POST) ])],
@@ -198,6 +211,12 @@ AC_ARG_ENABLE([rabbitmq-event-handler],
               [AS_IF([test "x$enable_rabbitmq_event_handler" != "xyes"],
                      [enable_rabbitmq_event_handler=no])],
               [enable_rabbitmq_event_handler=maybe])
+
+AC_ARG_ENABLE([systemd-sockets],
+              [AS_HELP_STRING([--enable-systemd-sockets],
+                              [Enable Systemd Unix Sockets management])],
+              [],
+              [enable_systemd_sockets=no])
 
 PKG_CHECK_MODULES([JANUS],
                   [
@@ -452,9 +471,23 @@ AC_CHECK_LIB([paho-mqtt3a],
                AS_IF([test "x$enable_mqtt" = "xyes"],
                      [AC_MSG_ERROR([paho c client not found. See README.md for installation instructions or use --disable-mqtt])])
              ])
+AC_CHECK_LIB([nanomsg],
+             [nn_socket],
+             [
+               AS_IF([test "x$enable_nanomsg" != "xno"],
+               [
+                  AC_DEFINE(HAVE_NANOMSG)
+                  enable_nanomsg=yes
+               ])
+             ],
+             [
+               AS_IF([test "x$enable_nanomsg" = "xyes"],
+                     [AC_MSG_ERROR([nanomsg not found. See README.md for installation instructions or use --disable-nanomsg])])
+             ])
 AM_CONDITIONAL([ENABLE_RABBITMQ], [test "x$enable_rabbitmq" = "xyes"])
 AM_CONDITIONAL([ENABLE_RABBITMQEVH], [test "x$enable_rabbitmq_event_handler" = "xyes"])
 AM_CONDITIONAL([ENABLE_MQTT], [test "x$enable_mqtt" = "xyes"])
+AM_CONDITIONAL([ENABLE_NANOMSG], [test "x$enable_nanomsg" = "xyes"])
 
 AC_TRY_COMPILE([
                #include <stdlib.h>
@@ -479,7 +512,16 @@ AC_TRY_COMPILE([
                ])
 AM_CONDITIONAL([ENABLE_PFUNIX], [test "x$enable_unix_sockets" = "xyes"])
 
+AS_IF([test "x$enable_systemd_sockets" = "xyes"],
+      [PKG_CHECK_MODULES([LIBSYSTEMD],
+                          [libsystemd],
+                          [
+                            AC_DEFINE(HAVE_LIBSYSTEMD)
+                          ],
+                          [AC_MSG_ERROR([libsystemd not found. systemd unix domain socket service not supported])])
+      ])
 
+ 
 ##
 # Plugins
 ##
@@ -497,12 +539,26 @@ AC_ARG_ENABLE([plugin-audiobridge],
                      [enable_plugin_audiobridge=no])],
               [enable_plugin_audiobridge=maybe])
 
+AC_ARG_ENABLE([plugin-duktape],
+              [AS_HELP_STRING([--disable-plugin-duktape],
+                              [Disable duktape plugin])],
+              [AS_IF([test "x$enable_plugin_duktape" != "xyes"],
+                     [enable_plugin_duktape=no])],
+              [enable_plugin_duktape=yes])
+
 AC_ARG_ENABLE([plugin-echotest],
               [AS_HELP_STRING([--disable-plugin-echotest],
                               [Disable echotest plugin])],
               [AS_IF([test "x$enable_plugin_echotest" != "xyes"],
                      [enable_plugin_echotest=no])],
               [enable_plugin_echotest=yes])
+
+AC_ARG_ENABLE([plugin-lua],
+              [AS_HELP_STRING([--disable-plugin-lua],
+                              [Disable lua plugin])],
+              [AS_IF([test "x$enable_plugin_lua" != "xyes"],
+                     [enable_plugin_lua=no])],
+              [enable_plugin_lua=yes])
 
 AC_ARG_ENABLE([plugin-recordplay],
               [AS_HELP_STRING([--disable-plugin-recordplay],
@@ -641,8 +697,30 @@ PKG_CHECK_MODULES([OGG],
 AC_SUBST([OGG_CFLAGS])
 AC_SUBST([OGG_LIBS])
 
+PKG_CHECK_MODULES([LUA],
+                  [lua],
+                  [
+                    AS_IF([test "x$enable_plugin_lua" = "xmaybe"],
+                          [enable_plugin_lua=yes])
+                  ],
+                  [PKG_CHECK_MODULES([LUA],
+                                     [lua5.3],
+                                     [
+                                       AS_IF([test "x$enable_plugin_lua" = "xmaybe"],
+                                             [enable_plugin_lua=yes])
+                                     ],
+                                     [
+                                       AS_IF([test "x$enable_plugin_lua" = "xyes"],
+                                             [AC_MSG_ERROR([lua-libs not found. See README.md for installation instructions or use --disable-plugin-lua])])
+                                     ])
+                  ])
+AC_SUBST([LUA_CFLAGS])
+AC_SUBST([LUA_LIBS])
+
 AM_CONDITIONAL([ENABLE_PLUGIN_AUDIOBRIDGE], [test "x$enable_plugin_audiobridge" = "xyes"])
+AM_CONDITIONAL([ENABLE_PLUGIN_DUKTAPE], [test "x$enable_plugin_duktape" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_ECHOTEST], [test "x$enable_plugin_echotest" = "xyes"])
+AM_CONDITIONAL([ENABLE_PLUGIN_LUA], [test "x$enable_plugin_lua" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_RECORDPLAY], [test "x$enable_plugin_recordplay" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_SIP], [test "x$enable_plugin_sip" = "xyes"])
 AM_CONDITIONAL([ENABLE_PLUGIN_SIPRE], [test "x$enable_plugin_sipre" = "xyes"])
@@ -799,6 +877,9 @@ AM_COND_IF([ENABLE_MQTT],
 AM_COND_IF([ENABLE_PFUNIX],
 	[echo "    Unix Sockets:          yes"],
 	[echo "    Unix Sockets:          no"])
+AM_COND_IF([ENABLE_NANOMSG],
+	[echo "    Nanomsg:               yes"],
+	[echo "    Nanomsg:               no"])
 echo "Plugins:"
 AM_COND_IF([ENABLE_PLUGIN_ECHOTEST],
 	[echo "    Echo Test:             yes"],
@@ -833,6 +914,12 @@ AM_COND_IF([ENABLE_PLUGIN_RECORDPLAY],
 AM_COND_IF([ENABLE_PLUGIN_TEXTROOM],
 	[echo "    Text Room:             yes"],
 	[echo "    Text Room:             no"])
+AM_COND_IF([ENABLE_PLUGIN_LUA],
+	[echo "    Lua Interpreter:       yes"],
+	[echo "    Lua Interpreter:       no"])
+AM_COND_IF([ENABLE_PLUGIN_DUKTAPE],
+	[echo "    Duktape Interpreter:   yes"],
+	[echo "    Duktape Interpreter:   no"])
 echo "Event handlers:"
 AM_COND_IF([ENABLE_SAMPLEEVH],
 	[echo "    Sample event handler:  yes"],
